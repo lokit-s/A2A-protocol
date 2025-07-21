@@ -819,4 +819,260 @@ if application == "A2A Business Management":
                 <div class="chat-row right">
                     <div class="chat-bubble user-msg user-bubble">{msg['content']}</div>
                     <img src="{user_avatar_url}" class="avatar user-avatar" alt="User">
-                </div
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        elif msg["role"] == "assistant":
+            # Display the LLM summary
+            st.markdown(
+                f"""
+                <div class="chat-row left">
+                    <img src="{agent_avatar_url}" class="avatar agent-avatar" alt="Agent">
+                    <div class="chat-bubble agent-msg agent-bubble">{msg.get('summary', msg['content'])}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # Display summary card and table if available
+            if 'table_data' in msg and msg['table_data']:
+                table_data = msg['table_data']
+                data_type = msg.get('table_type', 'data')
+                
+                # Create and display summary card
+                summary_card_html = create_data_summary_card(table_data, data_type)
+                if summary_card_html:
+                    st.markdown(summary_card_html, unsafe_allow_html=True)
+                
+                # Create and display formatted table
+                df = pd.DataFrame(table_data)
+                df_display = format_dataframe_for_display(df, data_type)
+                
+                st.markdown('<div class="pretty-table">', unsafe_allow_html=True)
+                st.dataframe(
+                    df_display, 
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        col: st.column_config.TextColumn(
+                            col,
+                            width="medium"
+                        ) for col in df_display.columns
+                    }
+                )
+                st.markdown('</div>', unsafe_allow_html=True)
+
+            # Add detailed output dropdown
+            if 'request_data' in msg or 'response_data' in msg:
+                with st.expander(f"🔍 Request/Response Details - Message {i + 1}", expanded=False):
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("**📤 Request Sent to RouterAgent:**")
+                        if 'request_data' in msg and msg['request_data']:
+                            st.code(json.dumps(msg['request_data'], indent=2), language="json")
+                        else:
+                            st.code("No request data available", language="text")
+
+                    with col2:
+                        st.markdown("**📥 Response Received from RouterAgent:**")
+                        if 'response_data' in msg and msg['response_data']:
+                            if isinstance(msg['response_data'], (dict, list)):
+                                st.code(json.dumps(msg['response_data'], indent=2), language="json")
+                            else:
+                                st.code(str(msg['response_data']), language="text")
+                        else:
+                            st.code("No response data available", language="text")
+
+                    # Add metadata
+                    if 'agent' in msg:
+                        st.markdown(f"**🤖 Routed to Agent:** {msg['agent']}")
+                    if 'endpoint' in msg:
+                        st.markdown(f"**🌐 RouterAgent Endpoint:** [{msg['endpoint']}]({msg['endpoint']})")
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # ========== CLAUDE-STYLE STICKY CHAT BAR ==========
+    st.markdown('<div class="sticky-chatbar"><div class="chatbar-claude">', unsafe_allow_html=True)
+    with st.form("chatbar_form", clear_on_submit=True):
+        chatbar_cols = st.columns([1, 16, 1])
+
+        # Left: Hamburger (Menu)
+        with chatbar_cols[0]:
+            hamburger_clicked = st.form_submit_button("≡", use_container_width=True, type="secondary")
+
+        # Middle: Input Box
+        with chatbar_cols[1]:
+            user_query_input = st.text_input(
+                "User Input ",
+                placeholder="How can I help you today?",
+                label_visibility="collapsed",
+                key="chat_input_box"
+            )
+
+        # Right: Send Button
+        with chatbar_cols[2]:
+            send_clicked = st.form_submit_button("➤", use_container_width=True)
+
+    st.markdown('</div></div>', unsafe_allow_html=True)
+
+    # ========== FLOATING AGENT MENU ==========
+    if st.session_state.get("show_menu", False):
+        st.markdown('<div class="tool-menu">', unsafe_allow_html=True)
+        st.markdown('<div class="server-title">A2A Business Agents</div>', unsafe_allow_html=True)
+
+        agent_label = "Agents" + (" ▼" if st.session_state["menu_expanded"] else " ▶")
+        if st.button(agent_label, key="expand_agents", help="Show agents", use_container_width=True):
+            st.session_state["menu_expanded"] = not st.session_state["menu_expanded"]
+
+        if st.session_state["menu_expanded"]:
+            st.markdown('<div class="expandable">', unsafe_allow_html=True)
+            for agent in st.session_state.agent_states.keys():
+                enabled = st.session_state.agent_states[agent]
+                new_val = st.toggle(agent, value=enabled, key=f"agent_toggle_{agent}")
+                st.session_state.agent_states[agent] = new_val
+            st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ========== HANDLE HAMBURGER ==========
+    if hamburger_clicked:
+        st.session_state["show_menu"] = not st.session_state.get("show_menu", False)
+        st.rerun()
+
+    # ========== PROCESS CHAT INPUT ==========
+    if send_clicked and user_query_input:
+        user_query = user_query_input
+
+        if not router_online:
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": "❌ RouterAgent is offline. Please ensure RouterAgent is running.",
+                "summary": "❌ RouterAgent is offline. Please ensure RouterAgent is running.",
+            })
+            st.rerun()
+            
+        try:
+            # Add user message
+            st.session_state.messages.append({
+                "role": "user",
+                "content": user_query,
+            })
+
+            # Send command to RouterAgent
+            result = send_command_to_router(user_query)
+
+            if result['status'] == 'success':
+                # Parse RouterAgent response
+                router_response = result.get('response', {})
+                
+                # Extract the actual agent response from RouterAgent's artifacts
+                response_data = None
+                if 'artifacts' in router_response and router_response['artifacts']:
+                    # Get the first artifact with text content
+                    artifact = router_response['artifacts'][0]
+                    if 'parts' in artifact and artifact['parts']:
+                        text_content = artifact['parts'][0].get('text', '{}')
+                        try:
+                            # Parse the nested JSON response
+                            response_data = parse_nested_response(text_content)
+                        except json.JSONDecodeError:
+                            response_data = {"message": text_content}
+                
+                if not response_data:
+                    response_data = router_response
+
+                # Extract table data
+                table_data, table_type = parse_response_for_table(response_data)
+
+                # Generate LLM summary  
+                summary = generate_summary(response_data, user_query)
+
+                assistant_message = {
+                    "role": "assistant",
+                    "content": str(response_data),
+                    "summary": summary,
+                    "agent": response_data.get('_router_info', {}).get('routed_to', 'Unknown'),
+                    "endpoint": result.get('endpoint', 'Unknown'),
+                    "user_query": user_query,
+                    "request_data": {"command": user_query, "endpoint": result.get('endpoint')},
+                    "response_data": response_data
+                }
+
+                # Add table data if available
+                if table_data:
+                    assistant_message["table_data"] = table_data
+                    assistant_message["table_type"] = table_type
+
+            else:
+                # Error handling
+                assistant_message = {
+                    "role": "assistant",
+                    "content": f"❌ {result.get('message', 'RouterAgent error')}",
+                    "summary": f"❌ {result.get('message', 'RouterAgent error')}",
+                    "request_data": {"command": user_query, "endpoint": result.get('endpoint')},
+                    "response_data": {"error": result.get('message')}
+                }
+
+            st.session_state.messages.append(assistant_message)
+
+        except Exception as e:
+            # Exception handling
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": f"⚠️ Error: {e}",
+                "summary": f"⚠️ Error: {e}",
+                "request_data": {"error": str(e)},
+                "response_data": {"error": str(e)}
+            })
+
+        st.rerun()
+
+    # ========== AUTO-SCROLL TO BOTTOM ==========
+    components.html("""
+        <script>
+          setTimeout(() => { window.scrollTo(0, document.body.scrollHeight); }, 80);
+        </script>
+    """)
+
+# ========== ENHANCED AGENT STATUS FOOTER ==========
+with st.expander("🛰️ Agent Network Status", expanded=False):
+    st.markdown("**Network:** Business Management Network")
+    st.markdown("---")
+
+    status_report = agent_status_check()
+
+    for agent_name, agent_info in status_report.items():
+        status = agent_info["status"]
+        url = agent_info["url"]
+
+        # Create a styled status display with clickable URL
+        st.markdown(f"""
+        <div class="agent-status-item">
+            <div>
+                <strong>{agent_name}:</strong> {status}
+            </div>
+            <div>
+                <a href="{url}" target="_blank" class="agent-url-link">{url}</a>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown(f"**Total Agents:** {len(status_report)}")
+    online_count = sum(1 for info in status_report.values() if "🟢" in info["status"])
+    st.markdown(f"**Online:** {online_count}/{len(status_report)}")
+
+# ========== EXAMPLES & HELP ==========
+with st.expander("Examples & Help"):
+    st.markdown("""
+    ### 📝 Example Commands
+    - **Add iPhone with price 999.99 to products**
+    - **Add John Doe with email john@example.com to customers**
+    - **List all products**
+    - **List all customers**
+    - **Make a sale by customer 1 buys product 1 of quantity 5**
+    - **List all sales**
+    - **Delete product 2**
+    - **Update customer 1 email to newemail@example.com**
+    """)
