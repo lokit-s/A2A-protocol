@@ -3,12 +3,13 @@ import psycopg2.extras
 import json
 from datetime import datetime
 import os
-from openai import OpenAI
+
 from python_a2a import A2AServer, skill, agent, run_server, TaskStatus, TaskState
 
-# Initialize OpenAI client with environment variable
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
+client = ChatGroq(
+    groq_api_key=os.environ.get("GROQ_API_KEY"),
+    model_name=os.environ.get("GROQ_MODEL", "llama3-70b-8192")
+)
 # Database configuration from environment variables
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
