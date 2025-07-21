@@ -1,5 +1,4 @@
 import os
-import asyncio
 import json
 import pandas as pd
 import streamlit as st
@@ -21,9 +20,6 @@ client = ChatGroq(
     groq_api_key=GROQ_API_KEY,
     model_name=os.environ.get("GROQ_MODEL", "llama3-70b-8192")
 )
-
-# -------- A2A IMPORTS --------
-from python_a2a import AgentNetwork, A2AServer, agent
 
 # ========== PAGE CONFIG ==========
 st.set_page_config(page_title="A2A Business Management", layout="wide")
@@ -298,145 +294,65 @@ st.markdown("""
         background: #e6f0ff;
         text-decoration: underline;
     }
+    .connection-status {
+        padding: 8px 12px;
+        border-radius: 6px;
+        margin: 10px 0;
+        font-weight: 500;
+    }
+    .connection-online {
+        background: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+    }
+    .connection-offline {
+        background: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+    }
+    .data-summary-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px;
+        border-radius: 12px;
+        margin: 10px 0;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    .data-summary-title {
+        font-size: 1.2rem;
+        font-weight: bold;
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .data-summary-stats {
+        display: flex;
+        gap: 20px;
+        margin-top: 10px;
+    }
+    .data-stat {
+        text-align: center;
+    }
+    .data-stat-number {
+        font-size: 1.8rem;
+        font-weight: bold;
+        display: block;
+    }
+    .data-stat-label {
+        font-size: 0.9rem;
+        opacity: 0.9;
+        display: block;
+    }
+    .pretty-table {
+        background: white;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        margin: 15px 0;
+    }
     </style>
 """, unsafe_allow_html=True)
-
-
-# ========== AGENT SETUP ==========
-@agent(name="RouterAgent", description="Routes commands to appropriate agents", version="1.0.0")
-class RouterAgent(A2AServer):
-    def __init__(self):
-        super().__init__()
-        self.network = AgentNetwork(name="Business Management Network")
-        self.agent_endpoints = {}
-        self.discover_agents()
-
-    def discover_agents(self):
-        # Get agent URLs from environment variables with fallbacks
-        urls = {
-            "ProductAgent": os.environ.get("PRODUCT_AGENT_URL", "http://localhost:5001"),
-            "CustomerAgent": os.environ.get("CUSTOMER_AGENT_URL", "http://localhost:5002"),
-            "SalesAgent": os.environ.get("SALES_AGENT_URL", "http://localhost:5003")
-        }
-        
-        for agent_name, url in urls.items():
-            try:
-                self.network.add(agent_name, url)
-                self.agent_endpoints[agent_name] = url
-                print(f"✅ Added {agent_name} at {url}")
-            except Exception as e:
-                print(f"❌ Failed to add {agent_name} at {url}: {e}")
-
-    def get_agent_from_llm(self, command):
-        system_prompt = """You are an intelligent router for a multi-agent system.
-There are three agents: ProductAgent, CustomerAgent, and SalesAgent.
-Given a user command, reply with ONLY the name of the agent best suited to handle it.
-Reply with 'None' if no agent is suitable.
-Examples:
-- "Add iPhone to products" -> ProductAgent
-- "Add Rahul to customers" -> CustomerAgent
-- "Make a sale by customer 1 buys product 2 of quantity 20" -> SalesAgent
-- "customer 1 buys 20 of product 1" -> SalesAgent
-- "List all sales" -> SalesAgent
-- "List all products" -> ProductAgent
-- "List all customers" -> CustomerAgent
-- "What's the weather?" -> None
-"""
-        try:
-            # Updated to use Groq/LangChain format instead of OpenAI format
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=command)
-            ]
-            response = client.invoke(messages)
-            name = response.content.strip()
-            if name in {"ProductAgent", "CustomerAgent", "SalesAgent"}:
-                return name
-        except Exception as e:
-            print(f"LLM routing error: {e}")
-        return None
-
-    def generate_summary(self, response_data, user_query):
-        """Generate a natural language summary of the response data"""
-        system_prompt = """You are a helpful assistant that generates concise, single-line summaries of database operations.
-Given a JSON response from an agent, generate a natural, friendly single-line summary.
-Keep it brief and conversational. Don't include the raw data.
-
-Examples:
-- For list operations: "Here are your customers/products/sales"
-- For add operations: "Successfully added [item name]"
-- For delete operations: "Successfully deleted [item name]"
-- For update operations: "Successfully updated [item name]"
-"""
-        try:
-            # Updated to use Groq/LangChain format instead of OpenAI format
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=f"User query: {user_query}\nResponse data: {json.dumps(response_data)}")
-            ]
-            response = client.invoke(messages)
-            return response.content.strip()
-        except Exception as e:
-            print(f"Summary generation error: {e}")
-            # Fallback summary
-            if isinstance(response_data, dict) and response_data.get('status') == 'success':
-                return response_data.get('message', 'Operation completed successfully')
-            return "Here's your data:"
-
-    def route_and_execute(self, command):
-        agent_name = self.get_agent_from_llm(command)
-        if not agent_name:
-            return {
-                'status': 'error',
-                'message': 'No agent found',
-                'command': command,
-                'request_data': {'command': command, 'routed_to': None},
-                'response_data': None
-            }
-        try:
-            agent_client = self.network.get_agent(agent_name)
-
-            # Prepare request data for logging
-            request_data = {
-                'agent': agent_name,
-                'endpoint': self.agent_endpoints.get(agent_name, 'Unknown'),
-                'command': command,
-                'timestamp': pd.Timestamp.now().isoformat()
-            }
-
-            # Execute the request
-            response = agent_client.ask(command)
-
-            return {
-                'status': 'success',
-                'routed_to': agent_name,
-                'command': command,
-                'response': response,
-                'request_data': request_data,
-                'response_data': response
-            }
-        except Exception as e:
-            return {
-                'status': 'error',
-                'message': f'Agent error: {e}',
-                'command': command,
-                'request_data': {
-                    'agent': agent_name,
-                    'endpoint': self.agent_endpoints.get(agent_name, 'Unknown'),
-                    'command': command,
-                    'timestamp': pd.Timestamp.now().isoformat(),
-                    'error': str(e)
-                },
-                'response_data': {'error': str(e)}
-            }
-
-
-# Initialize router
-if "router" not in st.session_state:
-    st.session_state.router = RouterAgent()
-
-router = st.session_state.router
-
 
 # ========== UTILITY FUNCTIONS ==========
 def get_image_base64(img_path):
@@ -447,29 +363,276 @@ def get_image_base64(img_path):
         return base64.b64encode(buffered.getvalue()).decode()
     return ""
 
+def check_router_connection():
+    """Check if RouterAgent is available"""
+    router_url = os.environ.get("ROUTER_AGENT_URL", "http://localhost:5000")
+    try:
+        response = requests.get(f"{router_url}/.well-known/agent.json", timeout=5)
+        return response.status_code == 200, router_url
+    except:
+        return False, router_url
+
+def send_command_to_router(command):
+    """Send command to RouterAgent via A2A protocol"""
+    router_url = os.environ.get("ROUTER_AGENT_URL", "http://localhost:5000")
+    
+    try:
+        # Use A2A protocol to send command
+        payload = {
+            "message": {
+                "content": {
+                    "text": command
+                }
+            }
+        }
+        
+        response = requests.post(f"{router_url}/tasks/send", json=payload, timeout=30)
+        response.raise_for_status()
+        
+        result = response.json()
+        return {
+            'status': 'success',
+            'response': result,
+            'endpoint': router_url
+        }
+        
+    except requests.exceptions.RequestException as e:
+        return {
+            'status': 'error',
+            'message': f'Router connection error: {str(e)}',
+            'endpoint': router_url
+        }
+    except Exception as e:
+        return {
+            'status': 'error', 
+            'message': f'Unexpected error: {str(e)}',
+            'endpoint': router_url
+        }
 
 def agent_status_check():
-    # Get agent URLs from environment variables
+    """Check status of all agents through RouterAgent"""
     agent_status = {
+        "RouterAgent": os.environ.get("ROUTER_AGENT_URL", "http://localhost:5000"),
         "ProductAgent": os.environ.get("PRODUCT_AGENT_URL", "http://localhost:5001"),
         "CustomerAgent": os.environ.get("CUSTOMER_AGENT_URL", "http://localhost:5002"),
         "SalesAgent": os.environ.get("SALES_AGENT_URL", "http://localhost:5003")
     }
+    
     status_report = {}
     for name, url in agent_status.items():
         try:
-            r = requests.get(f"{url}/.well-known/agent.json", timeout=5)
+            response = requests.get(f"{url}/.well-known/agent.json", timeout=5)
             status_report[name] = {
-                "status": "🟢 Online" if r.status_code == 200 else "🔴 Offline",
+                "status": "🟢 Online" if response.status_code == 200 else "🔴 Offline",
                 "url": url
             }
         except:
             status_report[name] = {
-                "status": "🔴 Offline",
+                "status": "🔴 Offline", 
                 "url": url
             }
     return status_report
 
+def generate_summary(response_data, user_query):
+    """Generate a natural language summary using Groq"""
+    system_prompt = """You are a helpful assistant that generates concise, single-line summaries of database operations.
+Given a JSON response from an agent, generate a natural, friendly single-line summary.
+Keep it brief and conversational. Don't include the raw data.
+
+Examples:
+- For list operations: "Here are your customers/products/sales"
+- For add operations: "Successfully added [item name]"
+- For delete operations: "Successfully deleted [item name]"
+- For update operations: "Successfully updated [item name]"
+- For sales: "Sale recorded successfully with total amount"
+"""
+    try:
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=f"User query: {user_query}\nResponse data: {json.dumps(response_data)}")
+        ]
+        response = client.invoke(messages)
+        return response.content.strip()
+    except Exception as e:
+        print(f"Summary generation error: {e}")
+        # Fallback summary
+        if isinstance(response_data, dict) and response_data.get('status') == 'success':
+            return response_data.get('message', 'Operation completed successfully')
+        return "Here's your data:"
+
+def parse_nested_response(router_response_text):
+    """Parse nested JSON response from RouterAgent"""
+    try:
+        # First, parse the outer RouterAgent response
+        outer_response = json.loads(router_response_text)
+        
+        # Extract the inner agent response
+        if 'response' in outer_response:
+            inner_response_text = outer_response['response']
+            if isinstance(inner_response_text, str):
+                # Parse the inner JSON string
+                inner_response = json.loads(inner_response_text)
+                
+                # Add router metadata to the response
+                inner_response['_router_info'] = {
+                    'routed_to': outer_response.get('routed_to'),
+                    'command': outer_response.get('command'),
+                    'status': outer_response.get('status')
+                }
+                
+                return inner_response
+        
+        return outer_response
+        
+    except json.JSONDecodeError:
+        return {"error": "Failed to parse response", "raw": router_response_text}
+
+def create_data_summary_card(data, data_type):
+    """Create a beautiful summary card for data"""
+    if not data or not isinstance(data, list):
+        return None
+    
+    count = len(data)
+    
+    # Get appropriate emoji and stats based on data type
+    if data_type == 'sales':
+        emoji = "💰"
+        title = "Sales Summary"
+        total_amount = sum(float(item.get('total_price', 0)) for item in data if 'total_price' in item)
+        avg_amount = total_amount / count if count > 0 else 0
+        stats_html = f"""
+        <div class="data-summary-stats">
+            <div class="data-stat">
+                <span class="data-stat-number">{count}</span>
+                <span class="data-stat-label">Total Sales</span>
+            </div>
+            <div class="data-stat">
+                <span class="data-stat-number">${total_amount:,.2f}</span>
+                <span class="data-stat-label">Revenue</span>
+            </div>
+            <div class="data-stat">
+                <span class="data-stat-number">${avg_amount:,.2f}</span>
+                <span class="data-stat-label">Avg Sale</span>
+            </div>
+        </div>
+        """
+    elif data_type == 'products':
+        emoji = "📦"
+        title = "Products Summary"
+        avg_price = sum(float(item.get('price', 0)) for item in data if 'price' in item) / count if count > 0 else 0
+        stats_html = f"""
+        <div class="data-summary-stats">
+            <div class="data-stat">
+                <span class="data-stat-number">{count}</span>
+                <span class="data-stat-label">Total Products</span>
+            </div>
+            <div class="data-stat">
+                <span class="data-stat-number">${avg_price:,.2f}</span>
+                <span class="data-stat-label">Avg Price</span>
+            </div>
+        </div>
+        """
+    elif data_type == 'customers':
+        emoji = "👥"
+        title = "Customers Summary"
+        with_email = sum(1 for item in data if item.get('email'))
+        stats_html = f"""
+        <div class="data-summary-stats">
+            <div class="data-stat">
+                <span class="data-stat-number">{count}</span>
+                <span class="data-stat-label">Total Customers</span>
+            </div>
+            <div class="data-stat">
+                <span class="data-stat-number">{with_email}</span>
+                <span class="data-stat-label">With Email</span>
+            </div>
+        </div>
+        """
+    else:
+        emoji = "📊"
+        title = f"{data_type.title()} Summary"
+        stats_html = f"""
+        <div class="data-summary-stats">
+            <div class="data-stat">
+                <span class="data-stat-number">{count}</span>
+                <span class="data-stat-label">Total Items</span>
+            </div>
+        </div>
+        """
+    
+    return f"""
+    <div class="data-summary-card">
+        <div class="data-summary-title">{emoji} {title}</div>
+        {stats_html}
+    </div>
+    """
+
+def format_dataframe_for_display(df, data_type):
+    """Format dataframe with better column names and styling"""
+    df_display = df.copy()
+    
+    # Format specific columns based on data type
+    if data_type == 'sales':
+        # Format price columns
+        if 'price' in df_display.columns:
+            df_display['price'] = df_display['price'].apply(lambda x: f"${float(x):,.2f}" if pd.notnull(x) else "")
+        if 'total_price' in df_display.columns:
+            df_display['total_price'] = df_display['total_price'].apply(lambda x: f"${float(x):,.2f}" if pd.notnull(x) else "")
+        
+        # Rename columns for better display
+        column_renames = {
+            'id': 'Sale ID',
+            'customer_id': 'Customer ID',
+            'customer_name': 'Customer Name',
+            'product_id': 'Product ID', 
+            'product_name': 'Product Name',
+            'quantity': 'Qty',
+            'price': 'Unit Price',
+            'total_price': 'Total Price',
+            'sale_time': 'Sale Date'
+        }
+        
+    elif data_type == 'products':
+        # Format price column
+        if 'price' in df_display.columns:
+            df_display['price'] = df_display['price'].apply(lambda x: f"${float(x):,.2f}" if pd.notnull(x) else "")
+        
+        column_renames = {
+            'id': 'Product ID',
+            'name': 'Product Name',
+            'description': 'Description',
+            'price': 'Price',
+            'created_at': 'Created Date'
+        }
+        
+    elif data_type == 'customers':
+        column_renames = {
+            'id': 'Customer ID',
+            'name': 'Customer Name',
+            'email': 'Email Address',
+            'created_at': 'Created Date'
+        }
+    else:
+        column_renames = {}
+    
+    # Apply column renames
+    for old_name, new_name in column_renames.items():
+        if old_name in df_display.columns:
+            df_display.rename(columns={old_name: new_name}, inplace=True)
+    
+    return df_display
+
+def parse_response_for_table(response_data):
+    """Parse response data to extract tabular information"""
+    if not isinstance(response_data, dict):
+        return None, None
+
+    # Check for list data in common keys
+    for key in ['sales', 'products', 'customers', 'result']:
+        if key in response_data and isinstance(response_data[key], list) and response_data[key]:
+            return response_data[key], key
+
+    return None, None
 
 def discover_agents():
     """Discover available A2A agents with their endpoints"""
@@ -479,7 +642,7 @@ def discover_agents():
             "endpoint": os.environ.get("PRODUCT_AGENT_URL", "http://localhost:5001")
         },
         "CustomerAgent": {
-            "description": "Handles customer data, profiles, and relationship management",
+            "description": "Handles customer data, profiles, and relationship management", 
             "endpoint": os.environ.get("CUSTOMER_AGENT_URL", "http://localhost:5002")
         },
         "SalesAgent": {
@@ -488,20 +651,6 @@ def discover_agents():
         }
     }
     return available_agents
-
-
-def parse_response_for_table(response_data):
-    """Parse response data to extract tabular information"""
-    if not isinstance(response_data, dict):
-        return None, None
-
-    # Check for list data in common keys
-    for key in ['customers', 'products', 'sales', 'result']:
-        if key in response_data and isinstance(response_data[key], list) and response_data[key]:
-            return response_data[key], key
-
-    return None, None
-
 
 # ========== SIDEBAR NAVIGATION ==========
 with st.sidebar:
@@ -539,8 +688,7 @@ with st.sidebar:
         # Dynamic server agents selection
         if application == "A2A Business Management" and "available_agents" in st.session_state:
             agent_options = [""] + list(st.session_state.available_agents.keys())
-            default_agent = list(st.session_state.available_agents.keys())[
-                0] if st.session_state.available_agents else ""
+            default_agent = list(st.session_state.available_agents.keys())[0] if st.session_state.available_agents else ""
             agent_index = agent_options.index(default_agent) if default_agent else 0
         else:
             agent_options = ["", "ProductAgent", "CustomerAgent", "SalesAgent"]
@@ -639,6 +787,22 @@ if application == "A2A Business Management":
     user_avatar_url = "https://cdn-icons-png.flaticon.com/512/1946/1946429.png"
     agent_avatar_url = "https://cdn-icons-png.flaticon.com/512/4712/4712039.png"
 
+    # Check RouterAgent connection
+    router_online, router_url = check_router_connection()
+    
+    if router_online:
+        st.markdown(f"""
+        <div class="connection-status connection-online">
+            🟢 Connected to RouterAgent at {router_url}
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div class="connection-status connection-offline">
+            🔴 RouterAgent offline at {router_url}
+        </div>
+        """, unsafe_allow_html=True)
+
     # Discover agents dynamically if not already done
     if not st.session_state.available_agents:
         discovered_agents = discover_agents()
@@ -655,225 +819,4 @@ if application == "A2A Business Management":
                 <div class="chat-row right">
                     <div class="chat-bubble user-msg user-bubble">{msg['content']}</div>
                     <img src="{user_avatar_url}" class="avatar user-avatar" alt="User">
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        elif msg["role"] == "assistant":
-            # Display the LLM summary
-            st.markdown(
-                f"""
-                <div class="chat-row left">
-                    <img src="{agent_avatar_url}" class="avatar agent-avatar" alt="Agent">
-                    <div class="chat-bubble agent-msg agent-bubble">{msg.get('summary', msg['content'])}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-            # Display table if available
-            if 'table_data' in msg and msg['table_data']:
-                df = pd.DataFrame(msg['table_data'])
-                st.dataframe(df, use_container_width=True)
-
-            # Add detailed output dropdown
-            if 'request_data' in msg or 'response_data' in msg:
-                with st.expander(f"🔍 Request/Response Details - Message {i + 1}", expanded=False):
-                    col1, col2 = st.columns(2)
-
-                    with col1:
-                        st.markdown("**📤 Request Sent to Agent:**")
-                        if 'request_data' in msg and msg['request_data']:
-                            st.code(json.dumps(msg['request_data'], indent=2), language="json")
-                        else:
-                            st.code("No request data available", language="text")
-
-                    with col2:
-                        st.markdown("**📥 Response Received from Agent:**")
-                        if 'response_data' in msg and msg['response_data']:
-                            if isinstance(msg['response_data'], (dict, list)):
-                                st.code(json.dumps(msg['response_data'], indent=2), language="json")
-                            else:
-                                st.code(str(msg['response_data']), language="text")
-                        else:
-                            st.code("No response data available", language="text")
-
-                    # Add metadata
-                    if 'agent' in msg:
-                        st.markdown(f"**🤖 Routed to Agent:** {msg['agent']}")
-                    if 'endpoint' in msg:
-                        st.markdown(f"**🌐 Agent Endpoint:** [{msg['endpoint']}]({msg['endpoint']})")
-
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # ========== CLAUDE-STYLE STICKY CHAT BAR ==========
-    st.markdown('<div class="sticky-chatbar"><div class="chatbar-claude">', unsafe_allow_html=True)
-    with st.form("chatbar_form", clear_on_submit=True):
-        chatbar_cols = st.columns([1, 16, 1])
-
-        # Left: Hamburger (Menu)
-        with chatbar_cols[0]:
-            hamburger_clicked = st.form_submit_button("≡", use_container_width=True, type="secondary")
-
-        # Middle: Input Box
-        with chatbar_cols[1]:
-            user_query_input = st.text_input(
-                "User Input ",
-                placeholder="How can I help you today?",
-                label_visibility="collapsed",
-                key="chat_input_box"
-            )
-
-        # Right: Send Button
-        with chatbar_cols[2]:
-            send_clicked = st.form_submit_button("➤", use_container_width=True)
-
-    st.markdown('</div></div>', unsafe_allow_html=True)
-
-    # ========== FLOATING AGENT MENU ==========
-    if st.session_state.get("show_menu", False):
-        st.markdown('<div class="tool-menu">', unsafe_allow_html=True)
-        st.markdown('<div class="server-title">A2A Business Agents</div>', unsafe_allow_html=True)
-
-        agent_label = "Agents" + (" ▼" if st.session_state["menu_expanded"] else " ▶")
-        if st.button(agent_label, key="expand_agents", help="Show agents", use_container_width=True):
-            st.session_state["menu_expanded"] = not st.session_state["menu_expanded"]
-
-        if st.session_state["menu_expanded"]:
-            st.markdown('<div class="expandable">', unsafe_allow_html=True)
-            for agent in st.session_state.agent_states.keys():
-                enabled = st.session_state.agent_states[agent]
-                new_val = st.toggle(agent, value=enabled, key=f"agent_toggle_{agent}")
-                st.session_state.agent_states[agent] = new_val
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # ========== HANDLE HAMBURGER ==========
-    if hamburger_clicked:
-        st.session_state["show_menu"] = not st.session_state.get("show_menu", False)
-        st.rerun()
-
-    # ========== PROCESS CHAT INPUT ==========
-    if send_clicked and user_query_input:
-        user_query = user_query_input
-
-        try:
-            enabled_agents = [k for k, v in st.session_state.agent_states.items() if v]
-            if not enabled_agents:
-                raise Exception("No agents are enabled. Please enable at least one agent in the menu.")
-
-            # Add user message
-            st.session_state.messages.append({
-                "role": "user",
-                "content": user_query,
-            })
-
-            # Route and execute via A2A
-            result = router.route_and_execute(user_query)
-
-            if result['status'] == 'success':
-                # Parse response
-                response_data = result.get('response', {})
-                routed_agent = result.get('routed_to', 'Unknown')
-
-                # Try to parse JSON if it's a string
-                if isinstance(response_data, str):
-                    try:
-                        response_data = json.loads(response_data)
-                    except json.JSONDecodeError:
-                        pass
-
-                # Extract table data
-                table_data, table_type = parse_response_for_table(response_data)
-
-                # Generate LLM summary
-                summary = router.generate_summary(response_data, user_query)
-
-                assistant_message = {
-                    "role": "assistant",
-                    "content": str(response_data),  # fallback
-                    "summary": summary,
-                    "agent": routed_agent,
-                    "endpoint": router.agent_endpoints.get(routed_agent, 'Unknown'),
-                    "user_query": user_query,
-                    "request_data": result.get('request_data', {}),
-                    "response_data": result.get('response_data', {})
-                }
-
-                # Add table data if available
-                if table_data:
-                    assistant_message["table_data"] = table_data
-                    assistant_message["table_type"] = table_type
-
-            else:
-                # Error handling
-                assistant_message = {
-                    "role": "assistant",
-                    "content": f"❌ {result.get('message', 'Routing failed')}",
-                    "summary": f"❌ {result.get('message', 'Routing failed')}",
-                    "request_data": result.get('request_data', {}),
-                    "response_data": result.get('response_data', {})
-                }
-
-            st.session_state.messages.append(assistant_message)
-
-        except Exception as e:
-            # Exception handling
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": f"⚠️ Error: {e}",
-                "summary": f"⚠️ Error: {e}",
-                "request_data": {"error": str(e)},
-                "response_data": {"error": str(e)}
-            })
-
-        st.rerun()
-
-    # ========== AUTO-SCROLL TO BOTTOM ==========
-    components.html("""
-        <script>
-          setTimeout(() => { window.scrollTo(0, document.body.scrollHeight); }, 80);
-        </script>
-    """)
-
-# ========== ENHANCED AGENT STATUS FOOTER ==========
-with st.expander("🛰️ Agent Network Status", expanded=False):
-    st.markdown("**Network:** Business Management Network")
-    st.markdown("---")
-
-    status_report = agent_status_check()
-
-    for agent_name, agent_info in status_report.items():
-        status = agent_info["status"]
-        url = agent_info["url"]
-
-        # Create a styled status display with clickable URL
-        st.markdown(f"""
-        <div class="agent-status-item">
-            <div>
-                <strong>{agent_name}:</strong> {status}
-            </div>
-            <div>
-                <a href="{url}" target="_blank" class="agent-url-link">{url}</a>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("---")
-    st.markdown(f"**Total Agents:** {len(status_report)}")
-    online_count = sum(1 for info in status_report.values() if "🟢" in info["status"])
-    st.markdown(f"**Online:** {online_count}/{len(status_report)}")
-
-# ========== EXAMPLES & HELP ==========
-with st.expander("Examples & Help"):
-    st.markdown("""
-    ### 📝 Example Commands
-    - **Add iPhone with price 999.99 to products**
-    - **Add John Doe with email john@example.com to customers**
-    - **List all products**
-    - **List all customers**
-    - **Make a sale by customer 1 buys product 1 of quantity 5**
-    - **List all sales**
-    - **Delete product 2**
-    - **Update customer 1 email to newemail@example.com**
-    """)
+                </div
