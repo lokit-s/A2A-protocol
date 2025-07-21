@@ -1,167 +1,142 @@
-import psycopg2
-import psycopg2.extras
 import json
 from datetime import datetime
-from langchain_groq import ChatGroq
-from langchain_core.messages import HumanMessage, SystemMessage
-from python_a2a import A2AServer, skill, agent, run_server, TaskStatus, TaskState
 import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from langchain_groq import ChatGroq
+from python_a2a import A2AServer, skill, agent, run_server, TaskStatus, TaskState
 
-# Initialize Groq client with environment variable
+# Initialize Groq client
 client = ChatGroq(
     groq_api_key=os.environ.get("GROQ_API_KEY"),
     model_name=os.environ.get("GROQ_MODEL", "llama3-70b-8192")
 )
 
-# Database configuration from environment variables
-DATABASE_URL = os.environ.get("DATABASE_URL")
 
 @agent(
     name="CustomerAgent",
-    description="Manages customer database operations using natural language",
-    version="1.2.0"
+    description="Manages customer database operations using natural language with PostgreSQL",
+    version="3.0.0"
 )
 class CustomerAgent(A2AServer):
     def __init__(self):
         super().__init__()
-        self.conn = None
-        self.cursor = None
+        self.database_url = os.environ.get("DATABASE_URL")
+        if not self.database_url:
+            raise ValueError("DATABASE_URL environment variable is required")
         self.init_database()
-        print("👥 CustomerAgent PostgreSQL database initialized")
+        print("👤 CustomerAgent database initialized with PostgreSQL")
+
+    def get_connection(self):
+        """Get a new database connection"""
+        return psycopg2.connect(self.database_url, cursor_factory=RealDictCursor)
 
     def init_database(self):
-        """Initialize PostgreSQL connection and create table if needed"""
+        """Initialize the database schema"""
+        conn = self.get_connection()
         try:
-            if not DATABASE_URL:
-                raise ValueError("DATABASE_URL environment variable is not set")
-            
-            self.conn = psycopg2.connect(DATABASE_URL)
-            self.cursor = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-            # Create customers table if it doesn't exist
-            self.cursor.execute('''
-                                CREATE TABLE IF NOT EXISTS customers
-                                (
-                                    id
-                                    SERIAL
-                                    PRIMARY
-                                    KEY,
-                                    name
-                                    VARCHAR
-                                (
-                                    255
-                                ) NOT NULL,
-                                    email VARCHAR
-                                (
-                                    255
-                                ),
-                                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                                    )
-                                ''')
-            self.conn.commit()
-            print("✅ PostgreSQL customers table ready")
+            with conn.cursor() as cursor:
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS customers (
+                        id SERIAL PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        email VARCHAR(255),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                conn.commit()
+                print("✅ Customers table created/verified")
         except Exception as e:
-            print(f"❌ Database connection error: {e}")
-            raise
-
-    def reconnect_if_needed(self):
-        """Reconnect to database if connection is lost"""
-        try:
-            if self.conn and not self.conn.closed:
-                self.cursor.execute('SELECT 1')
-                return
-        except:
-            pass
-
-        print("🔄 Reconnecting to database...")
-        self.init_database()
+            print(f"❌ Database initialization error: {e}")
+            conn.rollback()
+        finally:
+            conn.close()
 
     def add_customer(self, name, email=None):
-        """Add a new customer to the database"""
-        self.reconnect_if_needed()
+        """Add a new customer"""
+        conn = self.get_connection()
         try:
-            self.cursor.execute(
-                'INSERT INTO customers (name, email) VALUES (%s, %s) RETURNING id',
-                (name, email)
-            )
-            customer_id = self.cursor.fetchone()['id']
-            self.conn.commit()
-            return customer_id
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    'INSERT INTO customers (name, email) VALUES (%s, %s) RETURNING id',
+                    (name, email)
+                )
+                customer_id = cursor.fetchone()['id']
+                conn.commit()
+                return customer_id
         except Exception as e:
-            self.conn.rollback()
-            print(f"❌ Add customer error: {e}")
-            raise
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
 
     def list_customers(self):
-        """List all customers from the database"""
-        self.reconnect_if_needed()
+        """List all customers"""
+        conn = self.get_connection()
         try:
-            self.cursor.execute('SELECT id, name, email, created_at FROM customers ORDER BY id')
-            rows = self.cursor.fetchall()
-            return [(row['id'], row['name'], row['email'], str(row['created_at'])) for row in rows]
-        except Exception as e:
-            print(f"❌ List customers error: {e}")
-            raise
+            with conn.cursor() as cursor:
+                cursor.execute('SELECT id, name, email, created_at FROM customers ORDER BY id')
+                return cursor.fetchall()
+        finally:
+            conn.close()
 
     def get_customer(self, customer_id):
-        """Get a specific customer by ID"""
-        self.reconnect_if_needed()
+        """Get a specific customer"""
+        conn = self.get_connection()
         try:
-            self.cursor.execute('SELECT id, name, email, created_at FROM customers WHERE id = %s', (customer_id,))
-            row = self.cursor.fetchone()
-            if row:
-                return {
-                    'id': row['id'],
-                    'name': row['name'],
-                    'email': row['email'],
-                    'created_at': str(row['created_at'])
-                }
-            return None
-        except Exception as e:
-            print(f"❌ Get customer error: {e}")
-            raise
+            with conn.cursor() as cursor:
+                cursor.execute('SELECT id, name, email, created_at FROM customers WHERE id = %s', (customer_id,))
+                row = cursor.fetchone()
+                if row:
+                    return dict(row)
+                return None
+        finally:
+            conn.close()
 
     def delete_customer(self, customer_id):
-        """Delete a customer by ID"""
-        self.reconnect_if_needed()
+        """Delete a customer"""
+        conn = self.get_connection()
         try:
-            self.cursor.execute('DELETE FROM customers WHERE id = %s', (customer_id,))
-            deleted_count = self.cursor.rowcount
-            self.conn.commit()
-            return deleted_count
+            with conn.cursor() as cursor:
+                cursor.execute('DELETE FROM customers WHERE id = %s', (customer_id,))
+                rowcount = cursor.rowcount
+                conn.commit()
+                return rowcount
         except Exception as e:
-            self.conn.rollback()
-            print(f"❌ Delete customer error: {e}")
-            raise
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
 
     def update_customer(self, customer_id, name=None, email=None):
-        """Update a customer's information"""
-        self.reconnect_if_needed()
+        """Update a customer"""
+        if not name and not email:
+            return 0
+            
+        conn = self.get_connection()
         try:
-            updates = []
-            params = []
-
-            if name is not None:
-                updates.append("name = %s")
-                params.append(name)
-            if email is not None:
-                updates.append("email = %s")
-                params.append(email)
-
-            if not updates:
-                return 0
-
-            params.append(customer_id)
-            sql = f'UPDATE customers SET {", ".join(updates)} WHERE id = %s'
-
-            self.cursor.execute(sql, params)
-            updated_count = self.cursor.rowcount
-            self.conn.commit()
-            return updated_count
+            with conn.cursor() as cursor:
+                updates = []
+                params = []
+                
+                if name is not None:
+                    updates.append("name = %s")
+                    params.append(name)
+                if email is not None:
+                    updates.append("email = %s")
+                    params.append(email)
+                
+                params.append(customer_id)
+                sql = f'UPDATE customers SET {", ".join(updates)} WHERE id = %s'
+                cursor.execute(sql, params)
+                rowcount = cursor.rowcount
+                conn.commit()
+                return rowcount
         except Exception as e:
-            self.conn.rollback()
-            print(f"❌ Update customer error: {e}")
-            raise
+            conn.rollback()
+            raise e
+        finally:
+            conn.close()
 
     def process_customer_command(self, command: str) -> dict:
         """Process natural language commands for customer management"""
@@ -179,23 +154,15 @@ Return only the JSON, no extra text.
 """
         try:
             messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=command)
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": command}
             ]
+            
             response = client.invoke(messages)
             result = response.content.strip()
-            print(f"🤖 CustomerAgent LLM response: {result}")
+            print(f"🤖 CustomerAgent Groq response: {result}")
 
-            try:
-                parsed = json.loads(result)
-            except json.JSONDecodeError:
-                import re
-                match = re.search(r'\{.*\}', result, re.DOTALL)
-                if match:
-                    parsed = json.loads(match.group())
-                else:
-                    raise ValueError("No JSON found in LLM response.")
-
+            parsed = json.loads(result)
             intent = parsed.get("intent")
             params = parsed.get("parameters", {})
 
@@ -216,10 +183,10 @@ Return only the JSON, no extra text.
                 customers = self.list_customers()
                 formatted_customers = [
                     {
-                        'id': c[0],
-                        'name': c[1],
-                        'email': c[2],
-                        'created_at': c[3]
+                        'id': c['id'],
+                        'name': c['name'],
+                        'email': c['email'],
+                        'created_at': c['created_at'].isoformat() if c['created_at'] else None
                     } for c in customers
                 ]
                 return {
@@ -237,6 +204,9 @@ Return only the JSON, no extra text.
                 customer = self.get_customer(cust_id)
                 print(f"🔍 CustomerAgent found customer: {customer}")
                 if customer:
+                    # Convert datetime to string for JSON serialization
+                    if customer.get('created_at'):
+                        customer['created_at'] = customer['created_at'].isoformat()
                     return {
                         'status': 'success',
                         'action': 'get_customer',
@@ -303,6 +273,22 @@ Return only the JSON, no extra text.
                 'message': f'Command failed: {str(e)}'
             }
 
+    @skill(
+        name="manage_customers",
+        description="Add, update, list, and delete customer records with PostgreSQL",
+        examples=[
+            "Add John Doe to customers",
+            "Add customer with name Sarah Smith and email sarah@example.com",
+            "List all customers",
+            "Get customer 1",
+            "Update customer 2 name to Michael Johnson",
+            "Update customer 2 email to mike@example.com",
+            "Delete customer 3"
+        ]
+    )
+    def manage_customers_skill(self, command: str) -> dict:
+        return self.process_customer_command(command)
+
     def ask(self, message):
         """Handle A2A ask requests - CRITICAL for inter-agent communication"""
         print(f"📞 CustomerAgent received ask request: {message}")
@@ -310,18 +296,6 @@ Return only the JSON, no extra text.
         print(f"📤 CustomerAgent sending response: {result}")
         return result
 
-    @skill(
-        name="manage_customers",
-        description="Add, update, list, and delete customer records via RouterAgent",
-        examples=[
-            "Add John Doe to customers",
-            "Add customer with name Sarah Smith and email sarah@example.com",
-            "List all customers",
-            "Get customer 1",
-            "Update customer 2 name to Michael Johnson",
-            "Delete customer 3"
-        ]
-    )
     def handle_task(self, task):
         """Handle incoming A2A tasks"""
         message_data = task.message or {}
@@ -349,22 +323,11 @@ Return only the JSON, no extra text.
 
         return task
 
-    def __del__(self):
-        """Clean up database connections"""
-        try:
-            if self.cursor:
-                self.cursor.close()
-            if self.conn:
-                self.conn.close()
-        except:
-            pass
-
 
 if __name__ == '__main__':
-    # Get port from environment (Render automatically sets PORT)
-    port = int(os.environ.get('PORT', 5002))
-    host = os.environ.get('HOST', '0.0.0.0')  # Render requires 0.0.0.0
-    
+    # Get port from environment variable for cloud deployment
+    port = int(os.environ.get("PORT", 5002))
+    print(f"🚀 Starting CustomerAgent with Groq AI and PostgreSQL on port {port}...")
     agent = CustomerAgent()
-    print(f"🚀 Customer Agent running on {host}:{port}")
-    run_server(agent, host=host, port=port)
+    print(f"👤 CustomerAgent running on port {port}")
+    run_server(agent, host='0.0.0.0', port=port)
