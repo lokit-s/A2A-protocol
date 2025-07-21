@@ -3,8 +3,9 @@ import psycopg2.extras
 import json
 from datetime import datetime
 import os
-
 from python_a2a import A2AServer, skill, agent, run_server, TaskStatus, TaskState
+from langchain_groq import ChatGroq
+from langchain_core.messages import HumanMessage, SystemMessage
 
 client = ChatGroq(
     groq_api_key=os.environ.get("GROQ_API_KEY"),
