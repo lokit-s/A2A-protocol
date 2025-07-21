@@ -7,10 +7,12 @@ from python_a2a import A2AServer, skill, agent, run_server, TaskStatus, TaskStat
 from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage
 
+# Initialize Groq client
 client = ChatGroq(
     groq_api_key=os.environ.get("GROQ_API_KEY"),
     model_name=os.environ.get("GROQ_MODEL", "llama3-70b-8192")
 )
+
 # Database configuration from environment variables
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -210,16 +212,13 @@ Important:
 Return only the JSON, no extra text.
 """
         try:
-            response = client.chat.completions.create(
-                model=os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": command}
-                ],
-                temperature=float(os.environ.get("OPENAI_TEMPERATURE", "0.1")),
-                max_tokens=int(os.environ.get("OPENAI_MAX_TOKENS", "200"))
-            )
-            result = response.choices[0].message.content.strip()
+            # Updated to use Groq/LangChain format instead of OpenAI format
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=command)
+            ]
+            response = client.invoke(messages)
+            result = response.content.strip()
             print(f"🤖 ProductAgent LLM response: {result}")
 
             try:
