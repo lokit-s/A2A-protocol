@@ -7,16 +7,20 @@ import base64
 from io import BytesIO
 from PIL import Image
 import requests
-from openai import OpenAI
 import streamlit.components.v1 as components
+from langchain_groq import ChatGroq
+from langchain_core.messages import HumanMessage, SystemMessage
 
-# Initialize OpenAI client with environment variable
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    st.error("🔐 OPENAI_API_KEY environment variable is not set. Please add it to your Streamlit Cloud secrets.")
+# Initialize Groq client with environment variable
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+if not GROQ_API_KEY:
+    st.error("🔐 GROQ_API_KEY environment variable is not set. Please add it to your Streamlit Cloud secrets.")
     st.stop()
 
-client = OpenAI(api_key=OPENAI_API_KEY)
+client = ChatGroq(
+    groq_api_key=GROQ_API_KEY,
+    model_name=os.environ.get("GROQ_MODEL", "llama3-70b-8192")
+)
 
 # -------- A2A IMPORTS --------
 from python_a2a import AgentNetwork, A2AServer, agent
@@ -339,16 +343,13 @@ Examples:
 - "What's the weather?" -> None
 """
         try:
-            response = client.chat.completions.create(
-                model=os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": command}
-                ],
-                temperature=float(os.environ.get("OPENAI_TEMPERATURE", "0")),
-                max_tokens=int(os.environ.get("OPENAI_MAX_TOKENS", "20"))
-            )
-            name = response.choices[0].message.content.strip()
+            # Updated to use Groq/LangChain format instead of OpenAI format
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=command)
+            ]
+            response = client.invoke(messages)
+            name = response.content.strip()
             if name in {"ProductAgent", "CustomerAgent", "SalesAgent"}:
                 return name
         except Exception as e:
@@ -368,16 +369,13 @@ Examples:
 - For update operations: "Successfully updated [item name]"
 """
         try:
-            response = client.chat.completions.create(
-                model=os.environ.get("OPENAI_MODEL", "gpt-3.5-turbo"),
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"User query: {user_query}\nResponse data: {json.dumps(response_data)}"}
-                ],
-                temperature=float(os.environ.get("OPENAI_TEMPERATURE", "0.3")),
-                max_tokens=int(os.environ.get("OPENAI_MAX_TOKENS", "50"))
-            )
-            return response.choices[0].message.content.strip()
+            # Updated to use Groq/LangChain format instead of OpenAI format
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=f"User query: {user_query}\nResponse data: {json.dumps(response_data)}")
+            ]
+            response = client.invoke(messages)
+            return response.content.strip()
         except Exception as e:
             print(f"Summary generation error: {e}")
             # Fallback summary
@@ -518,11 +516,11 @@ with st.sidebar:
 
         # Dynamic options based on application selection
         protocol_options = ["", "A2A Protocol"]
-        llm_options = ["", "GPT-3.5 Turbo", "GPT-4o", "GPT-4"]
+        llm_options = ["", "Groq Llama3-70B", "Groq Llama3-8B", "Groq Mixtral-8x7B"]
 
         # Auto-select defaults for A2A Application
         protocol_index = protocol_options.index("A2A Protocol") if application == "A2A Business Management" else 0
-        llm_index = llm_options.index("GPT-3.5 Turbo") if application == "A2A Business Management" else 0
+        llm_index = llm_options.index("Groq Llama3-70B") if application == "A2A Business Management" else 0
 
         protocol = st.selectbox(
             "Protocol",
