@@ -841,9 +841,9 @@ if application == "A2A Business Management":
                 data_type = msg.get('table_type', 'data')
                 
                 # Create and display summary card
-                summary_card_html = create_data_summary_card(table_data, data_type)
-                if summary_card_html:
-                    st.markdown(summary_card_html, unsafe_allow_html=True)
+                # summary_card_html = create_data_summary_card(table_data, data_type)
+                # if summary_card_html:
+                #     st.markdown(summary_card_html, unsafe_allow_html=True)
                 
                 # Create and display formatted table
                 df = pd.DataFrame(table_data)
