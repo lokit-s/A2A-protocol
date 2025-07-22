@@ -22,7 +22,7 @@ client = ChatGroq(
 )
 
 # ========== PAGE CONFIG ==========
-st.set_page_config(page_title="A2A Business Management", layout="wide")
+st.set_page_config(page_title="A2A Data Management", layout="wide")
 
 # ========== GLOBAL CSS ==========
 st.markdown("""
@@ -659,7 +659,7 @@ with st.sidebar:
         # Application selectbox
         application = st.selectbox(
             "Select Application",
-            ["Select Application", "A2A Business Management"],
+            ["Select Application", "A2A Data Management"],
             key="app_select"
         )
 
@@ -668,8 +668,8 @@ with st.sidebar:
         llm_options = ["", "Groq Llama3-70B", "Groq Llama3-8B", "Groq Mixtral-8x7B"]
 
         # Auto-select defaults for A2A Application
-        protocol_index = protocol_options.index("A2A Protocol") if application == "A2A Business Management" else 0
-        llm_index = llm_options.index("Groq Llama3-70B") if application == "A2A Business Management" else 0
+        protocol_index = protocol_options.index("A2A Protocol") if application == "A2A Data Management" else 0
+        llm_index = llm_options.index("Groq Llama3-70B") if application == "A2A Data Management" else 0
 
         protocol = st.selectbox(
             "Protocol",
@@ -686,7 +686,7 @@ with st.sidebar:
         )
 
         # Dynamic server agents selection
-        if application == "A2A Business Management" and "available_agents" in st.session_state:
+        if application == "A2A Data Management" and "available_agents" in st.session_state:
             agent_options = [""] + list(st.session_state.available_agents.keys())
             default_agent = list(st.session_state.available_agents.keys())[0] if st.session_state.available_agents else ""
             agent_index = agent_options.index(default_agent) if default_agent else 0
@@ -745,14 +745,14 @@ st.markdown(
             letter-spacing: -2px;
             color: #222;
         ">
-            A2A-Driven Business Management Platform
+            A2A-Driven Data Management Platform
         </span>
         <span style="
             font-size: 1.15rem;
             color: #555;
             margin-top: 0.35rem;
         ">
-            Agentic Platform: Leveraging A2A Protocol and LLMs for Intelligent Business Operations and Real-time Analytics.
+            Agentic Platform: Leveraging A2A Protocol and LLMs for Intelligent Data Operations and Real-time Analytics.
         </span>
         <hr style="
         width: 80%;
@@ -783,7 +783,7 @@ if "menu_expanded" not in st.session_state:
     st.session_state["menu_expanded"] = True
 
 # ========== MAIN APPLICATION LOGIC ==========
-if application == "A2A Business Management":
+if application == "A2A Data Management":
     user_avatar_url = "https://cdn-icons-png.flaticon.com/512/1946/1946429.png"
     agent_avatar_url = "https://cdn-icons-png.flaticon.com/512/4712/4712039.png"
 
@@ -920,7 +920,7 @@ if application == "A2A Business Management":
     # ========== FLOATING AGENT MENU ==========
     if st.session_state.get("show_menu", False):
         st.markdown('<div class="tool-menu">', unsafe_allow_html=True)
-        st.markdown('<div class="server-title">A2A Business Agents</div>', unsafe_allow_html=True)
+        st.markdown('<div class="server-title">A2A Data Agents</div>', unsafe_allow_html=True)
 
         agent_label = "Agents" + (" ▼" if st.session_state["menu_expanded"] else " ▶")
         if st.button(agent_label, key="expand_agents", help="Show agents", use_container_width=True):
@@ -1037,7 +1037,7 @@ if application == "A2A Business Management":
 
 # ========== ENHANCED AGENT STATUS FOOTER ==========
 with st.expander("🛰️ Agent Network Status", expanded=False):
-    st.markdown("**Network:** Business Management Network")
+    st.markdown("**Network:** Data Management Network")
     st.markdown("---")
 
     status_report = agent_status_check()
